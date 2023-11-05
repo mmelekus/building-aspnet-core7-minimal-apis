@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using AutoMapper;
 using DishesAPI.DbContexts;
+using DishesAPI.Entities;
 using DishesAPI.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
@@ -28,7 +29,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapGet("/dishes", async Task<Ok<IEnumerable<DishDto>>> (DishesDbContext dishesDbContext,
+var dishesEndpoints = app.MapGroup("/dishes");
+var dishWithGuidEndpoints = dishesEndpoints.MapGroup("/{dishId:guid}");
+var ingredientsEndpoints = dishWithGuidEndpoints.MapGroup("/ingredients");
+
+dishesEndpoints.MapGet("", async Task<Ok<IEnumerable<DishDto>>> (DishesDbContext dishesDbContext,
     ClaimsPrincipal claimsPrincipal,
     IMapper mapper,
     string? name) =>
@@ -40,7 +45,7 @@ app.MapGet("/dishes", async Task<Ok<IEnumerable<DishDto>>> (DishesDbContext dish
             .ToListAsync()));
     });
 
-app.MapGet("/dishes/{dishId:guid}", async Task<Results<NotFound, Ok<DishDto>>> (DishesDbContext dishesDbContext,
+dishWithGuidEndpoints.MapGet("", async Task<Results<NotFound, Ok<DishDto>>> (DishesDbContext dishesDbContext,
     IMapper mapper,
     Guid dishId) =>
     {
@@ -49,9 +54,9 @@ app.MapGet("/dishes/{dishId:guid}", async Task<Results<NotFound, Ok<DishDto>>> (
         if (dishEntity == null) { return TypedResults.NotFound(); }
 
         return TypedResults.Ok(mapper.Map<DishDto>(dishEntity));
-    });
+    }).WithName("GetDish");
 
-app.MapGet("/dishes/{dishName}", async Task<Ok<DishDto>> (DishesDbContext dishesDbContext,
+dishesEndpoints.MapGet("/{dishName}", async Task<Ok<DishDto>> (DishesDbContext dishesDbContext,
     IMapper mapper,
     string dishName) =>
     {
@@ -59,7 +64,7 @@ app.MapGet("/dishes/{dishName}", async Task<Ok<DishDto>> (DishesDbContext dishes
             .FirstOrDefaultAsync(d => d.Name == dishName)));
     });
 
-app.MapGet("/dishes/{dishId}/ingredients", async Task<Results<NotFound, Ok<IEnumerable<IngredientDto>>>> (DishesDbContext dishesDbContext,
+ingredientsEndpoints.MapGet("", async Task<Results<NotFound, Ok<IEnumerable<IngredientDto>>>> (DishesDbContext dishesDbContext,
     IMapper mapper,
     Guid dishId) =>
     {
@@ -72,6 +77,59 @@ app.MapGet("/dishes/{dishId}/ingredients", async Task<Results<NotFound, Ok<IEnum
             .FirstOrDefaultAsync(d => d.Id == dishId))?.Ingredients));
     });
 
+dishesEndpoints.MapPost("", async Task<CreatedAtRoute<DishDto>> (DishesDbContext dishesDbContext,
+    IMapper mapper,
+    // LinkGenerator linkGenerator,
+    // HttpContext httpContext,
+    DishForCreationDto dishForCreationDto) =>
+    {
+        var dishEntity = mapper.Map<Dish>(dishForCreationDto);
+        dishesDbContext.Add(dishEntity);
+        await dishesDbContext.SaveChangesAsync();
+
+        var dishToReturn = mapper.Map<DishDto>(dishEntity);
+        return TypedResults.CreatedAtRoute(
+            dishToReturn,
+            "GetDish",
+            new { dishId = dishToReturn.Id }
+        );
+
+        // var linkToDish = linkGenerator.GetUriByName(
+        //     httpContext,
+        //     "GetDish",
+        //     new { dishId = dishToReturn.Id });
+        // return TypedResults.Created(linkToDish, dishToReturn);
+    });
+
+dishWithGuidEndpoints.MapPut("", async Task<Results<NotFound, NoContent>> (DishesDbContext dishesDbContext,
+    IMapper mapper,
+    Guid dishId,
+    DishForUpdateDto dishForUpdateDto) =>
+    {
+        var dishEntity =  await dishesDbContext.Dishes
+            .FirstOrDefaultAsync(d => d.Id == dishId);
+        if (dishEntity is null) { return TypedResults.NotFound(); }
+
+        mapper.Map(dishForUpdateDto, dishEntity);
+
+        await dishesDbContext.SaveChangesAsync();
+
+        return TypedResults.NoContent();
+    });
+
+dishWithGuidEndpoints.MapDelete("", async Task<Results<NotFound, NoContent>> (DishesDbContext dishesDbContext,
+    Guid dishId) =>
+    {
+        var dishEntity = await dishesDbContext.Dishes
+            .FirstOrDefaultAsync(d => d.Id == dishId);
+        if (dishEntity is null) { return TypedResults.NotFound(); }
+
+        dishesDbContext.Dishes.Remove(dishEntity);
+        await dishesDbContext.SaveChangesAsync();
+
+        return TypedResults.NoContent();
+    });
+    
 // recreate & migrate the database on each run, for demo purposes
 using (var serviceScope = app.Services.GetService<IServiceScopeFactory>().CreateScope())
 {
